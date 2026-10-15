@@ -1,24 +1,29 @@
 using UnityEngine;
-using UnityEngine.UI; // Nodig voor de Slider
+using UnityEngine.UI;
 using System.IO.Ports;
 
-public class SliderGameController : MonoBehaviour
+public class MultiSliderGameController : MonoBehaviour
 {
     // Pas "COM3" aan naar jouw poort
     SerialPort stream = new SerialPort("/dev/cu.usbmodem2101", 9600);
 
-    public Slider gameSlider;         // Sleep hier je Slider in via de Inspector
+    [Header("Sliders")]
+    public Slider slider1;
+    public Slider slider2;
+    public Slider slider3;
     
-    [Header("Slider Instellingen")]
-    public float decreaseSpeed = 100f; // Hoeveel punten per seconde de slider afloopt
-    public float bumpAmount = 1f;    // Hoeveel punten erbij komen per druk op de knop
-    
-    private float sliderValue;
+    [Header("Instellingen")]
+    public float decreaseSpeed = 10f; // Hoe snel ze allemaal van nature aflopen
+    public float bumpAmount = 15f;    // Hoeveel punten erbij komen per druk op de knop
+
+    private float value1;
+    private float value2;
+    private float value3;
 
     void Start()
     {
         stream.ReadTimeout = 25;
-        try 
+        try
         {
             stream.Open();
             Debug.Log("Serial Port geopend!");
@@ -28,26 +33,25 @@ public class SliderGameController : MonoBehaviour
             Debug.LogError("Kon poort niet openen: " + e.Message);
         }
 
-        // Zet de slider op het begin op zijn maximum
-        if (gameSlider != null)
-        {
-            sliderValue = gameSlider.maxValue;
-        }
+        // Zet alle sliders in het begin op hun maximum
+        if (slider1 != null) value1 = slider1.maxValue;
+        if (slider2 != null) value2 = slider2.maxValue;
+        if (slider3 != null) value3 = slider3.maxValue;
     }
 
     void Update()
     {
-        // 1. Laat de slider van nature aflopen over tijd
-        if (sliderValue > 0)
-        {
-            sliderValue -= decreaseSpeed * Time.deltaTime;
-        }
-        else
-        {
-            sliderValue = 0; // Kan niet onder de 0 komen
-        }
+        // 1. Laat alle drie de sliders van nature aflopen over tijd
+        if (value1 > 0) value1 -= decreaseSpeed * Time.deltaTime;
+        else value1 = 0;
 
-        // 2. Lees de Arduino uit of er op de knop is gedrukt
+        if (value2 > 0) value2 -= decreaseSpeed * Time.deltaTime;
+        else value2 = 0;
+
+        if (value3 > 0) value3 -= decreaseSpeed * Time.deltaTime;
+        else value3 = 0;
+
+        // 2. Lees de Arduino uit voor binnengekomen knoppen
         if (stream.IsOpen)
         {
             try
@@ -57,11 +61,21 @@ public class SliderGameController : MonoBehaviour
                 {
                     data = data.Trim();
                     
-                    // Als de Arduino "P" stuurt, geef de slider een tikje omhoog
-                    if (data == "P")
+                    // Geef de juiste slider een tikje omhoog op basis van de knop
+                    if (data == "P1")
                     {
-                        sliderValue += bumpAmount;
-                        Debug.Log("Knop ingedrukt! Slider omhoog.");
+                        value1 += bumpAmount;
+                        Debug.Log("Knop 1 ingedrukt -> Slider 1 omhoog");
+                    }
+                    else if (data == "P2")
+                    {
+                        value2 += bumpAmount;
+                        Debug.Log("Knop 2 ingedrukt -> Slider 2 omhoog");
+                    }
+                    else if (data == "P3")
+                    {
+                        value3 += bumpAmount;
+                        Debug.Log("Knop 3 ingedrukt -> Slider 3 omhoog");
                     }
                 }
             }
@@ -71,11 +85,21 @@ public class SliderGameController : MonoBehaviour
             }
         }
 
-        // Zorg dat de waarde netjes binnen de min en max van de slider blijft
-        if (gameSlider != null)
+        // 3. Update de visuele UI sliders in Unity
+        if (slider1 != null)
         {
-            sliderValue = Mathf.Clamp(sliderValue, gameSlider.minValue, gameSlider.maxValue);
-            gameSlider.value = sliderValue; // Update de UI slider
+            value1 = Mathf.Clamp(value1, slider1.minValue, slider1.maxValue);
+            slider1.value = value1;
+        }
+        if (slider2 != null)
+        {
+            value2 = Mathf.Clamp(value2, slider2.minValue, slider2.maxValue);
+            slider2.value = value2;
+        }
+        if (slider3 != null)
+        {
+            value3 = Mathf.Clamp(value3, slider3.minValue, slider3.maxValue);
+            slider3.value = value3;
         }
     }
 

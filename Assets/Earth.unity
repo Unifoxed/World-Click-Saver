@@ -1156,7 +1156,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6f39e36008aeb40f58a3c6b653478094, type: 3}
   m_Name: 
   m_EditorClassIdentifier: '::'
-  gameSlider: {fileID: 674508708}
+  slider1: {fileID: 674508708}
+  slider2: {fileID: 1466670339}
+  slider3: {fileID: 1754480946}
   decreaseSpeed: 10
   bumpAmount: 15
 --- !u!4 &1194926907
