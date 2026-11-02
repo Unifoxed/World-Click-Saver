@@ -8,11 +8,29 @@ public class MultiSliderGameController : MonoBehaviour
 {
     SerialPort stream = new SerialPort("/dev/cu.usbmodem2101", 9600);
 
+    [Header("Audio")]
+    public AudioSource crisisAudioSource;     // Voor de crisis events (15 sec)
+    public AudioSource countdownAudioSource;  // Voor het aftellen (tikt per seconde)
+    public AudioSource redEarthAudioSource;   // Geluid dat meebeweegt met het rood worden van de aarde
+    [Range(0f, 1f)] public float maxRedAudioVolume = 0.5f; // Hoe hard het vuurgeluid maximaal mag klinken (0.0 tot 1.0)
+
+    [Header("Aarde Emission Instellingen")]
+    public Renderer earthRenderer;            // Sleep hier de Mesh Renderer van je aarde naartoe
+    public Color normalEmissionColor = Color.black; // Kleur bij veilige waarden
+    public Color alertEmissionColor = Color.red;    // Kleur bij 0
+    public float maxEmissionIntensity = 5f;         // Hoe fel de HDR glow maximaal mag worden bij 0
+    private Material earthMaterial;
+
     [Header("Sliders")]
     public Slider slider1; 
     public Slider slider2; 
     public Slider slider3; 
     public Slider mainSlider; 
+    public Slider winOrLoseSlider; 
+
+    [Header("Win / Lose Slider Instellingen")]
+    public float dangerTimeThreshold = 10f; 
+    public float winLoseChangeSpeed = 20f;  
 
     [Header("UI Text voor Blokjes")]
     public Text levelText1;
@@ -20,26 +38,32 @@ public class MultiSliderGameController : MonoBehaviour
     public Text levelText3;
     public Text countdownText; 
 
-    [Header("Status Background Logo's (Staan in Canvas onder StatusBackground)")]
+    [Header("Status Background Logo's")]
     public GameObject statusLogoPeople; 
     public GameObject statusLogoProfit; 
     public GameObject statusLogoPlanet; 
 
-    [Header("Popup Logo's (Staan in Canvas onder het Popup Panel)")]
+    [Header("Popup Logo's")]
     public GameObject popupLogoPeople; 
     public GameObject popupLogoProfit; 
     public GameObject popupLogoPlanet; 
+
+    [Header("Centrale Eind Iconen (0 = Doodshoofd, 100 = Peace)")]
+    public GameObject centerSkullObject;      // Sleep hier het Doodshoofd GameObject in
+    public GameObject centerPeaceObject;      // Sleep hier het Peace GameObject in
+    public float popupIconMaxSize = 2.5f;     // Hoe groot het logo in het midden moet verschijnen
 
     [Header("Schermen")]
     public GameObject popupPanel; 
     public Image statusBackgroundImage; 
 
     [Header("Basis Instellingen & Timings")]
-    public float baseDecreaseSpeed = 40f;  // Basissnelheid per seconde
-    public float baseBumpAmount = 25f;    // Vult per klik 25% op
+    public float baseDecreaseSpeed = 40f;  
+    public float baseBumpAmount = 25f;    
     public float startDelay = 5f;         
     public float firstEventDelay = 10f;   
     public float subsequentEventInterval = 30f; 
+    public float crisisDuration = 15f;    
 
     [Header("Upgrade / Downgrade Belang & Balans")]
     public int maxLevel = 4;
@@ -60,18 +84,40 @@ public class MultiSliderGameController : MonoBehaviour
 
     private float startTimer = 0f;
     private float eventTimer = 0f;
+    private float crisisTimer = 0f;       
+    private float dangerTimer = 0f;       
     private int activeEventIndex = 0; 
     private int eventsCompleted = 0;
     public int totalEventsToWin = 5; 
     private bool gameEnded = false;
+    private int lastCountdownSecond = -1; 
     private Color originalStatusColor = Color.white;
     private Coroutine popupBlinkRoutine;
+    private Coroutine crisisAudioStopRoutine;
 
     void Start()
     {
         stream.ReadTimeout = 25;
         try { stream.Open(); Debug.Log("Serial Port geopend!"); }
         catch (System.Exception e) { Debug.LogError("Kon poort niet openen: " + e.Message); }
+
+        if (crisisAudioSource == null)
+        {
+            crisisAudioSource = GetComponent<AudioSource>();
+        }
+
+        if (redEarthAudioSource != null)
+        {
+            redEarthAudioSource.loop = true;
+            redEarthAudioSource.volume = 0f;
+            redEarthAudioSource.Play();
+        }
+
+        if (earthRenderer != null)
+        {
+            earthMaterial = earthRenderer.material;
+            earthMaterial.EnableKeyword("_EMISSION");
+        }
 
         InitSlider(slider1, ref value1, ref bump1, ref speed1, ref level1);
         InitSlider(slider2, ref value2, ref bump2, ref speed2, ref level2);
@@ -84,10 +130,21 @@ public class MultiSliderGameController : MonoBehaviour
             mainSlider.value = 50f; 
         }
 
+        if (winOrLoseSlider != null)
+        {
+            winOrLoseSlider.minValue = 0f;
+            winOrLoseSlider.maxValue = 100f;
+            winOrLoseSlider.value = 50f; 
+        }
+
         if (statusBackgroundImage != null)
         {
             originalStatusColor = statusBackgroundImage.color;
         }
+
+        // Zet de centrale eind-icoontjes uit bij de start
+        if (centerSkullObject != null) centerSkullObject.SetActive(false);
+        if (centerPeaceObject != null) centerPeaceObject.SetActive(false);
 
         startTimer = startDelay;
         eventTimer = firstEventDelay; 
@@ -117,10 +174,21 @@ public class MultiSliderGameController : MonoBehaviour
         if (startTimer > 0)
         {
             startTimer -= Time.deltaTime;
+            
+            int currentSecond = Mathf.CeilToInt(startTimer);
+            if (currentSecond != lastCountdownSecond && currentSecond > 0)
+            {
+                lastCountdownSecond = currentSecond;
+                if (countdownAudioSource != null)
+                {
+                    countdownAudioSource.Play();
+                }
+            }
+
             if (countdownText != null)
             {
                 countdownText.gameObject.SetActive(true);
-                countdownText.text = Mathf.Ceil(startTimer).ToString(); 
+                countdownText.text = currentSecond.ToString(); 
             }
             return; 
         }
@@ -139,13 +207,27 @@ public class MultiSliderGameController : MonoBehaviour
             eventTimer = subsequentEventInterval; 
         }
 
-        if (activeEventIndex > 0 && statusBackgroundImage != null)
+        if (activeEventIndex > 0)
         {
-            float lerp = Mathf.PingPong(Time.time * 4f, 1f); 
-            statusBackgroundImage.color = Color.Lerp(originalStatusColor, Color.red, lerp);
+            crisisTimer -= Time.deltaTime;
+            if (crisisTimer <= 0)
+            {
+                activeEventIndex = 0;
+                HideAllStatusLogos();
+                if (statusBackgroundImage != null) statusBackgroundImage.color = originalStatusColor;
+
+                if (crisisAudioSource != null && crisisAudioSource.isPlaying)
+                {
+                    crisisAudioSource.Stop();
+                }
+            }
+            else if (statusBackgroundImage != null)
+            {
+                float lerp = Mathf.PingPong(Time.time * 4f, 1f); 
+                statusBackgroundImage.color = Color.Lerp(originalStatusColor, Color.red, lerp);
+            }
         }
 
-        // EXTREME EVENT DRUK: Tijdens een event vermenigvuldigt de daling met maar liefst 5.0x!
         float spd1 = speed1 * (activeEventIndex == 1 ? 5.0f : 1f);
         float spd2 = speed2 * (activeEventIndex == 2 ? 5.0f : 1f);
         float spd3 = speed3 * (activeEventIndex == 3 ? 5.0f : 1f);
@@ -182,6 +264,8 @@ public class MultiSliderGameController : MonoBehaviour
         UpdateSliderUI(slider3, ref value3);
 
         UpdateMainSliderHealth();
+        UpdateWinOrLoseSlider();
+        UpdateEarthEmissionAndAudio(); 
     }
 
     void UpdateMainSliderHealth()
@@ -208,7 +292,82 @@ public class MultiSliderGameController : MonoBehaviour
 
         if (eventsCompleted >= totalEventsToWin && mainSlider.value >= mainSlider.maxValue)
         {
+            if (winOrLoseSlider != null) winOrLoseSlider.value = 100f;
             WinGame();
+        }
+    }
+
+    void UpdateWinOrLoseSlider()
+    {
+        if (mainSlider == null || winOrLoseSlider == null) return;
+
+        float mainVal = mainSlider.value;
+
+        if (mainVal >= 0f && mainVal <= 10f)
+        {
+            dangerTimer += Time.deltaTime;
+            if (dangerTimer >= dangerTimeThreshold)
+            {
+                winOrLoseSlider.value -= winLoseChangeSpeed * Time.deltaTime;
+            }
+        }
+        else if (mainVal >= 90f && mainVal <= 100f)
+        {
+            dangerTimer = 0f; 
+            winOrLoseSlider.value += winLoseChangeSpeed * Time.deltaTime;
+        }
+        else
+        {
+            dangerTimer = 0f; 
+        }
+
+        winOrLoseSlider.value = Mathf.Clamp(winOrLoseSlider.value, winOrLoseSlider.minValue, winOrLoseSlider.maxValue);
+
+        // --- SCHERM GROOT MAKEN BIJ 0 OF 100 ---
+        if (winOrLoseSlider.value <= 0f)
+        {
+            if (centerSkullObject != null && !centerSkullObject.activeSelf)
+            {
+                centerSkullObject.SetActive(true);
+                RectTransform skullRect = centerSkullObject.GetComponent<RectTransform>();
+                if (skullRect != null) skullRect.localScale = Vector3.one * popupIconMaxSize;
+            }
+            LoseGame();
+        }
+        else if (winOrLoseSlider.value >= 100f)
+        {
+            if (centerPeaceObject != null && !centerPeaceObject.activeSelf)
+            {
+                centerPeaceObject.SetActive(true);
+                RectTransform peaceRect = centerPeaceObject.GetComponent<RectTransform>();
+                if (peaceRect != null) peaceRect.localScale = Vector3.one * popupIconMaxSize;
+            }
+            WinGame();
+        }
+    }
+
+    void UpdateEarthEmissionAndAudio()
+    {
+        if (mainSlider == null) return;
+
+        float mainVal = mainSlider.value;
+        float emissionFactor = 0f;
+
+        if (mainVal <= 25f)
+        {
+            emissionFactor = Mathf.InverseLerp(25f, 0f, mainVal);
+        }
+
+        if (earthMaterial != null)
+        {
+            Color currentEmission = Color.Lerp(normalEmissionColor, alertEmissionColor, emissionFactor);
+            currentEmission *= Mathf.Lerp(1f, maxEmissionIntensity, emissionFactor);
+            earthMaterial.SetColor("_EmissionColor", currentEmission);
+        }
+
+        if (redEarthAudioSource != null)
+        {
+            redEarthAudioSource.volume = emissionFactor * maxRedAudioVolume;
         }
     }
 
@@ -226,11 +385,29 @@ public class MultiSliderGameController : MonoBehaviour
         }
 
         activeEventIndex = Random.Range(1, 4);
+        crisisTimer = crisisDuration; 
         
         UpdateStatusLogosDisplay();
 
+        if (crisisAudioSource != null)
+        {
+            if (crisisAudioStopRoutine != null) StopCoroutine(crisisAudioStopRoutine);
+
+            crisisAudioSource.Play();
+            crisisAudioStopRoutine = StartCoroutine(StopAudioAfterSeconds(crisisDuration));
+        }
+
         if (popupBlinkRoutine != null) StopCoroutine(popupBlinkRoutine);
         popupBlinkRoutine = StartCoroutine(BlinkPopupRoutine());
+    }
+
+    IEnumerator StopAudioAfterSeconds(float seconds)
+    {
+        yield return new WaitForSeconds(seconds);
+        if (crisisAudioSource != null && crisisAudioSource.isPlaying)
+        {
+            crisisAudioSource.Stop();
+        }
     }
 
     IEnumerator BlinkPopupRoutine()
@@ -286,7 +463,16 @@ public class MultiSliderGameController : MonoBehaviour
         Debug.Log("GEFELICITEERD! De wereld is gered!");
     }
 
-    // --- UPGRADE & DOWNGRADE LOGICA ---
+    void LoseGame()
+    {
+        gameEnded = true;
+        HideAllStatusLogos();
+        HideAllPopupLogos();
+        if (popupPanel != null) popupPanel.SetActive(false);
+        if (statusBackgroundImage != null) statusBackgroundImage.color = originalStatusColor;
+        Debug.Log("VERLOREN! De balans is te ver doorgeslagen.");
+    }
+
     public void UpgradeSlider1() { TryUpgrade(ref level1, ref bump1, ref speed1); UpdateAllUI(); }
     public void DowngradeSlider1() { TryDowngrade(ref level1, ref bump1, ref speed1); UpdateAllUI(); }
     public void UpgradeSlider2() { TryUpgrade(ref level2, ref bump2, ref speed2); UpdateAllUI(); }
